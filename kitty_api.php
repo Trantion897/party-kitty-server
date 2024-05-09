@@ -35,7 +35,7 @@ class KittyName {
      * Create a random name consisting of two words from the system dictionary,
      * that is not already used by any existing entry in the database
      */
-    public static function random() {
+    public static function random($pdo) {
         $dictionary = file("/usr/share/dict/words", FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES);
         // TODO: Avoid words that are similar to others. Maybe use diceware word list.
         $dictionary = array_filter($dictionary, function($word) {
@@ -43,7 +43,7 @@ class KittyName {
         });
         
         shuffle($dictionary);
-        $existingStatement = $this->pdo->query("SELECT name from partykitty_data", PDO::FETCH_COLUMN, 0);
+        $existingStatement = $pdo->query("SELECT name from partykitty_data", PDO::FETCH_COLUMN, 0);
         $existingNames = $existingStatement->fetchAll(PDO::FETCH_COLUMN, 0);
                 
         do {
@@ -90,7 +90,7 @@ class KittyApi {
             
         } else {
             // Generate new name
-            $name = KittyName::random();
+            $name = KittyName::random($this->pdo);
             $new = true;
         }
         
