@@ -1,4 +1,7 @@
 <?php
+define("HEADER_IF_MODIFIED_SINCE", "If-Modified-Since");
+define("PHP_HEADER_IF_MODIFIED_SINCE", "HTTP_IF_MODIFIED_SINCE");
+define("DATE_FORMAT_MYSQL", "Y-m-d H:i:s");
 
 class KittyName {
     private array $name;
@@ -80,7 +83,7 @@ class KittyApi {
         
         // TODO: Capture PK violations
         $statement = $this->pdo->prepare(
-            "INSERT INTO partykitty_data SET name=:name, currencySet=:currency, amount=:amount, partySize=:partySize, splitRatio=:splitRatio, config=:config, last_update=CURRENT_TIMESTAMP(), last_view=CURRENT_TIMESTAMP();"
+            "INSERT INTO partykitty_data SET name=:name, currencySet=:currency, amount=:amount, partySize=:partySize, splitRatio=:splitRatio, config=:config, last_update=UTC_TIMESTAMP(), last_view=UTC_TIMESTAMP();"
         );
         
         $amount = $putdata['amount'];
@@ -103,7 +106,7 @@ class KittyApi {
         print(json_encode([
             "name" => $name->format(),
             "amount" => json_decode($row['amount']),
-            "lastUpdate" => $row['last_update'],
+            "lastUpdate" => $row['last_update']->format(DateTimeInterface::ISO8601),
         ]));
         
     }
@@ -120,7 +123,7 @@ class KittyApi {
         
         // Check the client's last update is not later than the server's update
         $clientLastUpdate = DateTimeImmutable::createFromFormat(DateTimeInterface::ISO8601, $postData['lastUpdate']);
-        $serverLastUpdate = DateTimeImmutable::createFromFormat(DateTimeInterface::ISO8601, $statement->fetchColumn(0));
+        $serverLastUpdate = DateTimeImmutable::createFromFormat(DATE_FORMAT_MYSQL, $statement->fetchColumn(0));
         
         if ($clientLastUpdate > $serverLastUpdate) {
             http_response_code(400);
@@ -166,7 +169,7 @@ class KittyApi {
         }
         
         $statement = $this->pdo->prepare(
-            "UPDATE partykitty_data SET currencySet=:currency, amount=:amount, partySize=:partySize, splitRatio=:splitRatio, config=:config, last_update=CURRENT_TIMESTAMP(), last_view=CURRENT_TIMESTAMP() WHERE name=:name;"
+            "UPDATE partykitty_data SET currencySet=:currency, amount=:amount, partySize=:partySize, splitRatio=:splitRatio, config=:config, last_update=UTC_TIMESTAMP(), last_view=UTC_TIMESTAMP() WHERE name=:name;"
         );
         
         // TODO: Clean up the JSON values
@@ -184,7 +187,7 @@ class KittyApi {
         print(json_encode([
             "name" => $name->format(),
             "amount" => json_decode($row['amount']),
-            "lastUpdate" => $row['last_update'],
+            "lastUpdate" => $row['last_update']->format(DateTimeInterface::ISO8601),
         ]));
     }
     
@@ -203,14 +206,29 @@ class KittyApi {
             http_response_code(404);
             return;
         }
+        
+        // Check if kitty has been modified
+        if (array_key_exists(PHP_HEADER_IF_MODIFIED_SINCE, $_SERVER)) {
+            $clientLastUpdate = DateTimeImmutable::createFromFormat(DateTimeInterface::RFC7231, $_SERVER[PHP_HEADER_IF_MODIFIED_SINCE], new DateTimeZone("UTC"));
+            $serverLastUpdate = $row['last_update'];
+            
+            if ($clientLastUpdate > $serverLastUpdate) {
+                http_response_code(400);
+                return;
+            } else if ($clientLastUpdate == $serverLastUpdate) {
+                http_response_code(304);
+                return;
+            }
+        }
+        
         print(json_encode([
             "name" => $name->format(),
             "amount" => json_decode($row['amount']),
             "partySize" => $row['partySize'],
             "splitRatio" => $row['splitRatio'],
             "config" => json_decode($row['config']),
-            "lastUpdate" => $row['last_update'],
-            "lastView" => $row['last_view']
+            "lastUpdate" => $row['last_update']->format(DateTimeInterface::ISO8601),
+            "lastView" => $row['last_view']->format(DateTimeInterface::ISO8601)
         ]));
     }
     
@@ -226,13 +244,19 @@ class KittyApi {
         $statement->execute(['name' => $name->format()]);
         $row = $statement->fetch(PDO::FETCH_ASSOC);
         
+        if ($row) {
+            $row['last_update'] = DateTimeImmutable::createFromFormat(DATE_FORMAT_MYSQL, $row['last_update'], new DateTimeZone("UTC"));
+            $row['last_view'] = DateTimeImmutable::createFromFormat(DATE_FORMAT_MYSQL, $row['last_view'], new DateTimeZone("UTC"));
+        }
+        
         return $row;
     }
     
 
 }
 header("Access-Control-Allow-Origin: *"); // TODO
-header("Access-Control-Allow-Methods: GET,PUT,POST");
+header("Access-Control-Allow-Methods: GET,PUT,POST,OPTIONS");
+header("Access-Control-Allow-Headers: " . HEADER_IF_MODIFIED_SINCE);
 $kitty = new KittyApi();
 
 // TODO: Common sanitisation method
@@ -245,5 +269,8 @@ switch ($_SERVER['REQUEST_METHOD']) {
         break;
     case ("POST"):
         $kitty->post();
+        break;
+    case("OPTIONS"):
+        print("");
         break;
 }
