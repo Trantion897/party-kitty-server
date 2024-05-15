@@ -75,27 +75,12 @@ class KittyApi {
         // TODO: This part needs moving to a POST method.
         $putdata = json_decode(file_get_contents("php://input", "r"), true);
         
-        if (array_key_exists("name", $putdata)) {
-            // Validate existing name
-            $name = KittyName::fromString($putdata['name'], true);
-            $new = false;
-            
-            // Get balance before update
-            $statement = $this->pdo->prepare("SELECT amount FROM partykitty_data WHERE name=:name LIMIT 1");
-            $statement->execute(['name' => $name->format()]);
-            $before = $statement->fetchColumn(0);
-            
-            // TODO: If $before === false, this name does not exist. Warn the user and/or create it. 
-            // Maybe they were away for a long time and it was culled.
-            
-        } else {
-            // Generate new name
-            $name = KittyName::random($this->pdo);
-            $new = true;
-        }
+        // Generate new name
+        $name = KittyName::random($this->pdo);
         
+        // TODO: Capture PK violations
         $statement = $this->pdo->prepare(
-            "REPLACE INTO partykitty_data SET name=:name, currencySet=:currency, amount=:amount, partySize=:partySize, splitRatio=:splitRatio, config=:config, last_update=CURRENT_TIMESTAMP(), last_view=CURRENT_TIMESTAMP();"
+            "INSERT INTO partykitty_data SET name=:name, currencySet=:currency, amount=:amount, partySize=:partySize, splitRatio=:splitRatio, config=:config, last_update=CURRENT_TIMESTAMP(), last_view=CURRENT_TIMESTAMP();"
         );
         
         $amount = $putdata['amount'];
@@ -110,11 +95,7 @@ class KittyApi {
             'config'    => json_encode($putdata['config']),
         ]);
         
-        if ($new) {
-            http_response_code(201);
-        } else {
-            http_response_code(200);
-        }
+        http_response_code(201);
         header("Content-Location: " . $name->format());
         
         $row = $this->loadData($name);
@@ -125,6 +106,86 @@ class KittyApi {
             "lastUpdate" => $row['last_update'],
         ]));
         
+    }
+    
+    public function post() {
+        $postData = json_decode(file_get_contents("php://input", "r"), true);
+        // Validate existing name
+        $name = KittyName::fromString($postData['name'], true);
+        
+        // Get balance before update
+        $statement = $this->pdo->prepare("SELECT last_update, amount FROM partykitty_data WHERE name=:name LIMIT 1");
+        $statement->execute(['name' => $name->format()]);
+        $beforeAmount = json_decode($statement->fetchColumn(1));
+        
+        // Check the client's last update is not later than the server's update
+        $clientLastUpdate = DateTimeImmutable::createFromFormat(DateTimeInterface::ISO8601, $postData['lastUpdate']);
+        $serverLastUpdate = DateTimeImmutable::createFromFormat(DateTimeInterface::ISO8601, $statement->fetchColumn(0));
+        
+        if ($clientLastUpdate > $serverLastUpdate) {
+            http_response_code(400);
+            print(json_encode([
+                "error" => "INVALID_LAST_UPDATE"
+            ]));
+            return;
+        }
+        
+        // Calculate the diff the client is sending
+        $newValue = [];
+        $error = false;
+        foreach($beforeAmount as $currency => $serverValue) {
+            if (!array_key_exists($currency, $postData['lastUpdateAmount'])) {
+                http_response_code(400);
+                print(json_encode([
+                    "error" => "CURRENCY_MISSING_LAST_UPDATE",
+                    "errorParam" => $currency,
+                ]));
+            }
+            if (!array_key_exists($currency, $postData['amount'])) {
+                http_response_code(400);
+                print(json_encode([
+                    "error" => "CURRENCY_MISSING_AMOUNT",
+                    "errorParam" => $currency,
+                ]));
+            }
+            
+            // TODO: Maybe allow floats, but use ints if possible
+            $beforeValue = (int)$postData['lastUpdateAmount'][$currency];
+            $afterValue = (int)$postData['amount'][$currency];
+            
+            if ($beforeValue == $serverValue) {
+                $newValue[$currency] = $afterValue;
+            } else {
+                $currencyDiff = $afterValue - $beforeValue;
+                $newValue[$currency] = $serverValue + $currencyDiff;
+            }
+        }
+        if ($error) {
+            // TODO: try/catch
+            return;
+        }
+        
+        $statement = $this->pdo->prepare(
+            "UPDATE partykitty_data SET currencySet=:currency, amount=:amount, partySize=:partySize, splitRatio=:splitRatio, config=:config, last_update=CURRENT_TIMESTAMP(), last_view=CURRENT_TIMESTAMP() WHERE name=:name;"
+        );
+        
+        // TODO: Clean up the JSON values
+        $statement->execute([
+            'name'      => $name->format(),
+            'currency'  => $postData['currency'],
+            'amount'    => json_encode($newValue),
+            'partySize' => (int)$postData['partySize'],
+            'splitRatio'=> (int)$postData['splitRatio'],
+            'config'    => json_encode($postData['config']),
+        ]);
+        
+        $row = $this->loadData($name);
+                
+        print(json_encode([
+            "name" => $name->format(),
+            "amount" => json_decode($row['amount']),
+            "lastUpdate" => $row['last_update'],
+        ]));
     }
     
     public function get() {
@@ -148,8 +209,8 @@ class KittyApi {
             "partySize" => $row['partySize'],
             "splitRatio" => $row['splitRatio'],
             "config" => json_decode($row['config']),
-            "lastUpdate" => $row['lastUpdate'],
-            "lastView" => $row['lastView']
+            "lastUpdate" => $row['last_update'],
+            "lastView" => $row['last_view']
         ]));
     }
     
@@ -170,15 +231,19 @@ class KittyApi {
     
 
 }
-header("Access-Control-Allow-Origin: http://localhost:5173");
-header("Access-Control-Allow-Methods: GET,PUT");
+header("Access-Control-Allow-Origin: *"); // TODO
+header("Access-Control-Allow-Methods: GET,PUT,POST");
 $kitty = new KittyApi();
 
+// TODO: Common sanitisation method
 switch ($_SERVER['REQUEST_METHOD']) {
     case ("PUT"):
         $kitty->put();
         break;
     case ("GET"):
         $kitty->get();
+        break;
+    case ("POST"):
+        $kitty->post();
         break;
 }
