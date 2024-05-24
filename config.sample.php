@@ -32,6 +32,41 @@ class Config {
     public const WORD_MAX_LENGTH = 8;
     
     /**
+     * Expiration settings
+     * 
+     * Set when old party kitties will be deleted from the server.
+     * ALL criteria must be met before a kitty is deleted.
+     */
+    
+    // Expire kitties this long after the last update
+    public const EXPIRATION_AFTER_LAST_UPDATE = '6 months';
+    
+    // Expire kitties this long after the last view/load
+    public const EXPIRATION_AFTER_LAST_VIEW = '1 month';
+    
+    // Run expiration after a new kitty is created
+    public const EXPIRE_AFTER_NEW = true;
+    
+    // Run expiration after an existing kitty is updated
+    public const EXPIRE_AFTER_UPDATE = true;
+    
+    // Run expiration after kitty data is loaded
+    public const EXPIRE_AFTER_GET = true;
+    
+    /**
+     * Rate limiting settings
+     * 
+     * Applies rate limits to usage by IP address.
+     * IP addresses are only stored for the rate limit period.
+     */
+    
+    // Apply rate limits over this period
+    public const RATE_LIMIT_PERIOD = '5 minutes';
+    
+    // Number of new kitties one user can create within the rate limit period
+    public const RATE_LIMIT_CREATE_LIMIT = '1';
+    
+    /**
      * Convenience methods, do not modify
      */
     public static function dbTableName($basename) {

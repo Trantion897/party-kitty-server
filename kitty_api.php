@@ -114,6 +114,10 @@ class KittyApi {
             "lastUpdate" => $row['last_update']->format(DateTimeInterface::ISO8601),
         ]));
         
+        if (Config::EXPIRE_AFTER_NEW) {
+            $this->expire();
+        }
+        
     }
     
     public function post() {
@@ -194,6 +198,10 @@ class KittyApi {
             "amount" => json_decode($row['amount']),
             "lastUpdate" => $row['last_update']->format(DateTimeInterface::ISO8601),
         ]));
+        
+        if (Config::EXPIRE_AFTER_UPDATE) {
+            $this->expire();
+        }
     }
     
     public function get() {
@@ -235,6 +243,10 @@ class KittyApi {
             "lastUpdate" => $row['last_update']->format(DateTimeInterface::ISO8601),
             "lastView" => $row['last_view']->format(DateTimeInterface::ISO8601)
         ]));
+        
+        if (Config::EXPIRE_AFTER_GET) {
+            $this->expire();
+        }
     }
     
     /**
@@ -255,6 +267,33 @@ class KittyApi {
         }
         
         return $row;
+    }
+    
+    /**
+     * Expire old kitties according to settings
+     */
+    public function expire() {
+        $lastUpdateInterval = DateInterval::createFromDateString(Config::EXPIRATION_AFTER_LAST_UPDATE);
+        $lastViewInterval = DateInterval::createFromDateString(Config::EXPIRATION_AFTER_LAST_VIEW);
+        $now = new DateTimeImmutable("now", new DateTimeZone("UTC"));
+
+        $statement = $this->pdo->prepare(
+            'DELETE FROM '.Config::dbTableName('data').
+            ' WHERE last_update < :last_update AND last_view < :last_view'
+        );
+        
+        $lastUpdateDate = $now->sub($lastUpdateInterval)->format(DATE_FORMAT_MYSQL);
+        $lastViewDate = $now->sub($lastViewInterval)->format(DATE_FORMAT_MYSQL);
+        
+        $statement->execute([
+            'last_update' => $lastUpdateDate,
+            'last_view' => $lastViewDate
+        ]);
+        
+        if ($statement->rowCount() > 0) {
+            trigger_error(sprintf('%1$d kitty/ies were expired due to lack of activity', $statement->rowCount()));
+        }
+
     }
     
 
