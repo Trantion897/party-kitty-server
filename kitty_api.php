@@ -3,6 +3,8 @@ define("HEADER_IF_MODIFIED_SINCE", "If-Modified-Since");
 define("PHP_HEADER_IF_MODIFIED_SINCE", "HTTP_IF_MODIFIED_SINCE");
 define("DATE_FORMAT_MYSQL", "Y-m-d H:i:s");
 
+require_once("config.php");
+
 class KittyName {
     private array $name;
     
@@ -39,14 +41,16 @@ class KittyName {
      * that is not already used by any existing entry in the database
      */
     public static function random($pdo) {
-        $dictionary = file("/usr/share/dict/words", FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES);
+        $dictionary = file(Config::WORD_LIST, FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES);
         // TODO: Avoid words that are similar to others. Maybe use diceware word list.
         $dictionary = array_filter($dictionary, function($word) {
-            return strlen($word) >= 4 && strlen($word) <= 8 && preg_match("/^[a-z]+$/", $word);
+            return strlen($word) >= Config::WORD_MIN_LENGTH && 
+                   strlen($word) <= Config::WORD_MAX_LENGTH && 
+                   preg_match("/^[a-z]+$/", $word);
         });
         
         shuffle($dictionary);
-        $existingStatement = $pdo->query("SELECT name from partykitty_data", PDO::FETCH_COLUMN, 0);
+        $existingStatement = $pdo->query("SELECT name from ".Config::DB_TABLE_PREFIX."data", PDO::FETCH_COLUMN, 0);
         $existingNames = $existingStatement->fetchAll(PDO::FETCH_COLUMN, 0);
                 
         do {
@@ -70,7 +74,8 @@ class KittyApi {
     private PDO $pdo;
     
     public function __construct() {
-        $this->pdo = new PDO("mysql:host=localhost;dbname=party_kitty", "partykitty", "Dh1KKsO/1KXXqS17");
+        $connect = sprintf('mysql:host=%1$s;dbname=%2$s', Config::DB_HOST, Config::DB_DB);
+        $this->pdo = new PDO($connect, Config::DB_USER, Config::DB_PASSWORD);
     }
     
     public function put() {
@@ -83,7 +88,7 @@ class KittyApi {
         
         // TODO: Capture PK violations
         $statement = $this->pdo->prepare(
-            "INSERT INTO partykitty_data SET name=:name, currencySet=:currency, amount=:amount, partySize=:partySize, splitRatio=:splitRatio, config=:config, last_update=UTC_TIMESTAMP(), last_view=UTC_TIMESTAMP();"
+            "INSERT INTO ".Config::dbTableName("data")." SET name=:name, currencySet=:currency, amount=:amount, partySize=:partySize, splitRatio=:splitRatio, config=:config, last_update=UTC_TIMESTAMP(), last_view=UTC_TIMESTAMP();"
         );
         
         $amount = $putdata['amount'];
@@ -117,7 +122,7 @@ class KittyApi {
         $name = KittyName::fromString($postData['name'], true);
         
         // Get balance before update
-        $statement = $this->pdo->prepare("SELECT last_update, amount FROM partykitty_data WHERE name=:name LIMIT 1");
+        $statement = $this->pdo->prepare("SELECT last_update, amount FROM ".Config::dbTableName("data")." WHERE name=:name LIMIT 1");
         $statement->execute(['name' => $name->format()]);
         $beforeAmount = json_decode($statement->fetchColumn(1));
         
@@ -169,7 +174,7 @@ class KittyApi {
         }
         
         $statement = $this->pdo->prepare(
-            "UPDATE partykitty_data SET currencySet=:currency, amount=:amount, partySize=:partySize, splitRatio=:splitRatio, config=:config, last_update=UTC_TIMESTAMP(), last_view=UTC_TIMESTAMP() WHERE name=:name;"
+            "UPDATE ".Config::dbTableName("data")." SET currencySet=:currency, amount=:amount, partySize=:partySize, splitRatio=:splitRatio, config=:config, last_update=UTC_TIMESTAMP(), last_view=UTC_TIMESTAMP() WHERE name=:name;"
         );
         
         // TODO: Clean up the JSON values
@@ -240,7 +245,7 @@ class KittyApi {
      * @return array
      */
     public function loadData(KittyName $name) {
-        $statement = $this->pdo->prepare("SELECT * FROM partykitty_data WHERE name=:name LIMIT 1");
+        $statement = $this->pdo->prepare("SELECT * FROM ".Config::dbTableName("data")." WHERE name=:name LIMIT 1");
         $statement->execute(['name' => $name->format()]);
         $row = $statement->fetch(PDO::FETCH_ASSOC);
         
