@@ -73,6 +73,9 @@ class KittyApi {
     
     private PDO $pdo;
     
+    public const ACTION_CREATE = 'create';
+    public const ACTION_UPDATE = 'update';
+    
     public function __construct() {
         $connect = sprintf('mysql:host=%1$s;dbname=%2$s', Config::DB_HOST, Config::DB_DB);
         $this->pdo = new PDO($connect, Config::DB_USER, Config::DB_PASSWORD);
@@ -85,6 +88,8 @@ class KittyApi {
         
         // Generate new name
         $name = KittyName::random($this->pdo);
+        
+        $this->applyRateLimits($_SERVER['REMOTE_ADDR'], self::ACTION_CREATE, $name);
         
         // TODO: Capture PK violations
         $statement = $this->pdo->prepare(
@@ -125,6 +130,8 @@ class KittyApi {
         // Validate existing name
         $name = KittyName::fromString($postData['name'], true);
         
+        $this->applyRateLimits($_SERVER['REMOTE_ADDR'], self::ACTION_UPDATE, $name);
+                
         // Get balance before update
         $statement = $this->pdo->prepare("SELECT last_update, amount FROM ".Config::dbTableName("data")." WHERE name=:name LIMIT 1");
         $statement->execute(['name' => $name->format()]);
@@ -293,10 +300,97 @@ class KittyApi {
         if ($statement->rowCount() > 0) {
             trigger_error(sprintf('%1$d kitty/ies were expired due to lack of activity', $statement->rowCount()));
         }
-
     }
     
-
+    /**
+     * Check rate limits applying to the current request and terminate with appropriate error
+     */
+    public function applyRateLimits($ip, $action, KittyName $kitty) {
+        if (!$this->checkRateLimits($ip, $action, $kitty)) {
+            // TODO: Could calculate the time until the oldest record expires
+            http_response_code(429);
+            header('Retry-After: '.Config::RATE_LIMIT_PERIOD);
+            // Because browsers don't expose the Retry-After header
+            print(json_encode(['RetryAfter' => Config::RATE_LIMIT_PERIOD]));
+            exit();
+        }
+    }
+    
+    /**
+     * Expire any rate limit data from before the rate limit period
+     */
+    public function expireRateLimits() {
+        $now = new DateTimeImmutable("now", new DateTimeZone("UTC"));
+        $expiration = $now->sub(new DateInterval('PT'.Config::RATE_LIMIT_PERIOD.'S'));
+        
+        $statement = $this->pdo->prepare(
+            'DELETE FROM '.Config::dbTableName('ratelimit').
+            ' WHERE timestamp < :timestamp'
+        );
+        
+        $statement->execute(['timestamp' => $expiration->format(DATE_FORMAT_MYSQL)]);
+    }
+    
+    /**
+     * Checks the rate limits that apply to an action
+     * 
+     * Returns true or false to indicate if this action is allowed.
+     * If the result is true, the action is stored in the rate limit table.
+     * Outdated rate limit data is deleted
+     */
+    public function checkRateLimits($ip, $action, KittyName $kitty=null) {
+        $this->expireRateLimits();
+        
+        switch ($action) {
+            case self::ACTION_CREATE:
+                if (empty(Config::RATE_LIMIT_CREATE_LIMIT)) {
+                    return true;
+                }
+                $appliedLimit = Config::RATE_LIMIT_CREATE_LIMIT;
+                break;
+            case self::ACTION_UPDATE:
+                if (empty(Config::RATE_LIMIT_UPDATE_LIMIT)) {
+                    return true;
+                }
+                $appliedLimit = Config::RATE_LIMIT_UPDATE_LIMIT;
+                break;
+            default:
+                throw new Exception("Unknown action for rate limit: $action");
+        }
+        
+        // Get recent actions
+        $sql = 'SELECT COUNT(1) FROM '.Config::dbTableName('ratelimit').
+               ' WHERE IP = :ip AND action = :action';
+        $params = [
+            'ip' => $ip,
+            'action' => $action,
+        ];
+        if (isset($kitty)) {
+            $sql .= ' AND kitty != :kitty';
+            $params['kitty'] = $kitty->format();
+        }
+        $statement = $this->pdo->prepare($sql);
+        
+        $statement->execute($params);
+        
+        if ($statement->fetchColumn(0) >= $appliedLimit) {
+            return false;
+        }
+        
+        // Rate limit NOT applied, add a new record for this action
+        $statement = $this->pdo->prepare(
+            'REPLACE INTO '.Config::dbTableName('ratelimit').
+            ' SET ip=:ip, action=:action, kitty=:kitty, timestamp=UTC_TIMESTAMP()'
+        );
+        
+        $statement->execute([
+            'ip' => $ip,
+            'action' => $action,
+            'kitty' => $kitty->format()
+        ]);
+        
+        return true;
+    }
 }
 header("Access-Control-Allow-Origin: *"); // TODO
 header("Access-Control-Allow-Methods: GET,PUT,POST,OPTIONS");

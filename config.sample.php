@@ -58,13 +58,18 @@ class Config {
      * 
      * Applies rate limits to usage by IP address.
      * IP addresses are only stored for the rate limit period.
+     * 
+     * Set any limit field to 0 to disable
      */
     
-    // Apply rate limits over this period
-    public const RATE_LIMIT_PERIOD = '5 minutes';
+    // Apply rate limits over this period (in seconds)
+    public const RATE_LIMIT_PERIOD = 300;
     
     // Number of new kitties one user can create within the rate limit period
     public const RATE_LIMIT_CREATE_LIMIT = '1';
+    
+    // Number of different kitties one user can edit within the rate limit period
+    public const RATE_LIMIT_UPDATE_LIMIT = '2';
     
     /**
      * Convenience methods, do not modify
