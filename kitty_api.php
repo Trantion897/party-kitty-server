@@ -82,8 +82,7 @@ class KittyApi {
     }
     
     public function put() {
-        // TODO: Updating an existing kitty will not be indempotent due to conflict resolution.
-        // TODO: This part needs moving to a POST method.
+        // PUT - create a new kitty with random name
         $putdata = json_decode(file_get_contents("php://input", "r"), true);
         
         // Generate new name
@@ -126,6 +125,7 @@ class KittyApi {
     }
     
     public function post() {
+        // POST - update an existing kitty
         $postData = json_decode(file_get_contents("php://input", "r"), true);
         // Validate existing name
         $name = KittyName::fromString($postData['name'], true);
@@ -151,7 +151,6 @@ class KittyApi {
         
         // Calculate the diff the client is sending
         $newValue = [];
-        $error = false;
         foreach($beforeAmount as $currency => $serverValue) {
             if (!array_key_exists($currency, $postData['lastUpdateAmount'])) {
                 http_response_code(400);
@@ -178,10 +177,6 @@ class KittyApi {
                 $currencyDiff = $afterValue - $beforeValue;
                 $newValue[$currency] = $serverValue + $currencyDiff;
             }
-        }
-        if ($error) {
-            // TODO: try/catch
-            return;
         }
         
         $statement = $this->pdo->prepare(
